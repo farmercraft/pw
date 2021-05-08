@@ -1,0 +1,561 @@
+#!/usr/bin/python3
+
+import logging
+import logging.handlers
+import syslog
+import socket
+import os.path
+import threading
+import queue
+import shutil
+
+import inotify.adapters
+
+log_server_ip = "192.168.0.132"
+
+#path and mountpoint
+src_plots_dir = { "/sdb/plots":"/sdb", "/sdc/plots":"/sdc", "/sdd/plots":"/sdd", "/sdf/plots":"/sdf", "/sde/plots":"/sde", "/sdh/plots":"/sdh", "/sdi/plots":"/sdi", "/sdj/plots":"/sdj", "/sdk/plots":"/sdk", "/home/f91/plots":"/"}
+
+dst_plots_dir = { "/sdg/plots":"/sdg"}
+
+#test work dispatch with ping-pong prio
+pw_test_prio = False
+
+#dryrun, won't touch the actual file
+pw_test_dryrun = False
+
+#trigger the wq stall
+pw_test_wq_stall = False
+
+#verbose debug message
+pw_debug = True
+pw_debug_dump_file_list = False
+
+def create_logger(log_level=logging.DEBUG):
+    logger = logging.getLogger("plot watcher")
+    logger.setLevel(log_level)
+
+    sh_formatter = logging.Formatter('%(name)s: %(message)s\n')
+    sh = logging.handlers.SysLogHandler(address=(log_server_ip, 514),
+            facility=syslog.LOG_INFO, socktype=socket.SOCK_STREAM)
+    sh.setLevel(log_level)
+    sh.setFormatter(sh_formatter)
+    sh.append_nul = False
+
+    ch_formatter = logging.Formatter('%(name)s: %(message)s')
+    ch = logging.StreamHandler()
+    ch.setLevel(log_level)
+    ch.setFormatter(ch_formatter)
+
+    logger.addHandler(sh)
+    logger.addHandler(ch)
+
+    return logger
+
+if pw_debug:
+    log = create_logger(logging.DEBUG)
+else:
+    log = create_logger(logging.INFO)
+
+class plot_file:
+    def __init__(self, path, name):
+        self.path = path
+        self.name = name
+        self.full_path = os.path.join(path, name)
+        self.actual_size = int(os.path.getsize(self.full_path))
+        self.size = int(self.actual_size / 1024 / 1024 / 1024)
+
+class plot_source:
+    def get_plot_file_list(self, dir_path, file_dict):
+        list = os.listdir(dir_path)
+        for name in list:
+            full_path = os.path.join(dir_path, name)
+            if os.path.isfile(full_path) and name.endswith(".plot"):
+                file_dict[name] = plot_file(dir_path, name)
+
+    def __init__(self, mountpoint, dir, src):
+        self.mountpoint = mountpoint
+        self.dir = dir
+        self.ready = False
+        self.avail = 0
+        self.copying_size = 0
+        self.avail_after_copy = 0
+        self.file_dict = {}
+        self.file_copying_dict = {}
+        self.src = src
+        self.mutex = threading.Lock()
+        self.get_plot_file_list(dir, self.file_dict)
+        self.update_status()
+        self.debug_set_full = False; #Debug
+
+    def lock(self):
+        self.mutex.acquire();
+
+    def unlock(self):
+        self.mutex.release();
+
+    def full(self):
+        if self.debug_set_full:
+            return True;
+        else:
+            return self.avail < 200
+
+    def full_after_copy(self):
+        if self.debug_set_full:
+            return True;
+        else:
+            return self.avail_after_copy < 200
+
+    def add_copying_file(self, f):
+        self.file_copying_dict[f.name] = f
+        self.copying_size = self.copying_size + f.size
+        self.update_status()
+
+    def del_copying_file(self, f):
+        self.file_copying_dict.pop(f.name)
+        self.copying_size = self.copying_size - f.size
+        self.update_status()
+
+    def add_file(self, f):
+        self.file_dict[f.name] = f
+
+    def del_file(self, f):
+        self.file_dict.pop(f.name)
+
+    def has_file(self, f):
+        if self.file_dict.__contains__(f.name) and self.file_dict[f.name].actual_size == f.actual_size:
+            r = True
+        else:
+            r = False
+        return r;
+
+    def has_copying_file(self, f):
+        if self.file_copying_dict.__contains__(f.name) and self.file_copying_dict[f.name].actual_size == f.actual_size:
+            r = True
+        else:
+            r = False
+        return r;
+
+    def update_status(self):
+        self.ready = os.path.ismount(self.mountpoint) and can_access_dir(self.dir)
+        if not self.ready:
+            return;
+
+        info = os.statvfs(self.dir)
+        self.avail = int(info.f_frsize * info.f_bavail / 1024 / 1024 / 1024)
+
+        if self.src:
+            self.avail_after_copy = self.avail + self.copying_size
+        else:
+            self.avail_after_copy = self.avail - self.copying_size
+
+    def dump(self, tag):
+        if self.src:
+            log.debug('[ ' + tag + ' ] ' + '======= SRC plot source dump =======')
+        else:
+            log.debug('[ ' + tag + ' ] ' + '======= DST plot source dump =======')
+        log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' mountpoint: ' + self.mountpoint + ' [avail] ' + str(self.avail) + 'G'
+                + ' [ready] ' + str(self.ready) + ' [copying] ' +
+                str(self.copying_size) + 'G [full] ' + str(self.full()) + ' [ full after copy ]' + str(self.full_after_copy()));
+        log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' file dict:')
+        if pw_debug_dump_file_list:
+            log.debug(self.file_dict)
+        log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' file copying dict:')
+        if pw_debug_dump_file_list:
+            log.debug(self.file_copying_dict)
+
+class work_item:
+    def __init__(self, f, in_source, prio):
+        self.plot_file = f
+        self.in_source = in_source
+        self.complete = False
+        self.prio = prio
+
+    def __lt__(self, other):
+        return self.prio < other.prio
+
+    def dump(self, tag):
+        log.debug('[ ' + tag + ' ] ' + '======= work item dump =======')
+        log.debug('[ ' + tag + ' ] ' + 'work item: ' + self.plot_file.full_path + ' size: ' + str(self.plot_file.size) + 'G' + ' actual size: ' + str(self.plot_file.actual_size) + 'B' + ' complete ' + self.complete);
+
+class work_queue:
+    def __init__(self, out_source):
+        self.stalled = False
+        self.q = queue.PriorityQueue()
+        self.mutex = threading.Lock()
+        self.cond = threading.Condition(self.mutex)
+        self.copying_size = 0
+        self.out_source = out_source
+        self.file_copying_dict = {}
+
+        self.debug_prio = 3 #debug
+
+    def lock(self):
+        self.mutex.acquire()
+
+    def unlock(self):
+        self.mutex.release()
+
+    def enqueue(self, item):
+        self.q.put(item)
+        log.debug('enqueue work: ' + item.plot_file.full_path + ' into ' + self.out_source.dir)
+        self.copying_size = self.copying_size + item.plot_file.actual_size
+        self.file_copying_dict[item.plot_file.name] = item
+        self.dump('wq_enqueue')
+        self.cond.notify()
+
+    def dequeue(self):
+        item = self.q.get()
+        log.debug('dequeue work: ' + item.plot_file.full_path + ' into ' + self.out_source.dir)
+        self.dump('wq_dequeue')
+        return item
+
+    def complete(self, item):
+        log.debug('complete work: ' + item.plot_file.full_path + ' into ' + self.out_source.dir)
+        self.copying_size = self.copying_size - item.plot_file.actual_size
+        self.file_copying_dict.pop(item.plot_file.name)
+        self.dump('wq_complete')
+
+    def stall(self):
+        log.debug('workqueue: ' + self.out_source.dir + ' stall , retiring all work items')
+        self.stalled = True;
+        self.q.queue.clear()
+
+        for name in list(self.file_copying_dict.keys()):
+            item = self.file_copying_dict[name]
+            self.complete(item)
+
+            src = item.in_source
+            dst = self.out_source
+
+            src.del_copying_file(item.plot_file)
+            src.add_file(item.plot_file)
+            dst.del_copying_file(item.plot_file)
+
+            del item
+
+        self.dump('wq_stall')
+
+    def dump(self, tag):
+        log.debug('[ ' + tag + ' ] ' + '======= work queue dump =======')
+        log.debug('[ ' + tag + ' ] ' + 'work queue ' + self.out_source.dir + ' stalled ' + str(self.stalled) + ' copying size ' + str(self.copying_size))
+        if pw_debug_dump_file_list:
+            log.debug(self.file_copying_dict)
+
+def can_access_dir(dir_path):
+    return os.path.isdir(dir_path) and os.access(dir_path, os.R_OK) and os.access(dir_path, os.W_OK) and os.access(dir_path, os.X_OK)
+
+def can_access_file(f):
+    return os.access(f.full_path, os.R_OK) and os.access(f.full_path, os.W_OK) and os.access(f.full_path, os.F_OK)
+
+def show_all_plot_sources():
+    for path in src_plot_source_dict.keys():
+        plot = src_plot_source_dict[path]
+        log.info('src plot: ' + ' [dir] ' + plot.dir + ' [avail] ' + str(plot.avail) + 'G'
+                + ' [ready] ' + str(plot.ready) + ' [full] ' + str(plot.full()));
+
+    for path in dst_plot_source_dict.keys():
+        plot = dst_plot_source_dict[path]
+        log.info('dst plot: ' + ' [dir] ' + plot.dir + ' [avail] ' + str(plot.avail) + 'G'
+                + ' [ready] ' + str(plot.ready) + ' [full] ' + str(plot.full()));
+
+def populate_plot_source():
+    for dir_path in src_plots_dir.keys():
+        mp = src_plots_dir[dir_path]
+        plot = plot_source(mp, dir_path, True)
+        plot.dump('populate_plot_source');
+
+        src_plot_source_dict[dir_path] = plot
+
+    for dir_path in dst_plots_dir.keys():
+        mp = dst_plots_dir[dir_path]
+        plot = plot_source(mp, dir_path, False)
+        plot.dump('populate_plot_source');
+
+        dst_plot_source_dict[dir_path] = plot
+
+    show_all_plot_sources()
+
+class worker_thread(threading.Thread):
+    def __init__(self, wq):
+        threading.Thread.__init__(self)
+        self.wq = wq
+
+    def run(self):
+        log.debug('starting work thread for ' + self.wq.out_source.dir);
+
+        while not exit_flag:
+            self.wq.lock()
+
+            while self.wq.q.empty():
+                all_full = True;
+
+                for dir_path in dst_plot_source_dict.keys():
+                    dst_plot_source_dict[dir_path].lock()
+
+                for dir_path in dst_plot_source_dict.keys():
+                    dst = dst_plot_source_dict[dir_path]
+                    if not dst.full_after_copy():
+                        all_full = False
+                        break;
+
+                if all_full:
+                    log.info('[ ALL FULL ] All the dst sources are full')
+                elif self.wq.out_source.full_after_copy():
+                    log.info('[ FULL ] ' + self.wq.out_source.dir + ' is full ')
+
+                for dir_path in dst_plot_source_dict.keys():
+                    dst_plot_source_dict[dir_path].unlock()
+
+                log.debug('worker thread ' + self.wq.out_source.dir + ' is idle')
+                self.wq.cond.wait()
+
+            log.debug('thread ' + self.wq.out_source.dir +' wake up')
+
+            item = self.wq.dequeue();
+            self.wq.unlock()
+
+            process_work_item(self.wq, item)
+            complete_work_item(self.wq, item)
+
+def populate_workers():
+    for dir_path in dst_plot_source_dict.keys():
+        dst = dst_plot_source_dict[dir_path]
+
+        wq = work_queue(dst)
+        thread = worker_thread(wq)
+        thread.start()
+        worker_thread_list.append(thread)
+
+def lock_workqueues_and_sources():
+    for t in worker_thread_list:
+        t.wq.lock();
+
+    for dir_path in dst_plot_source_dict.keys():
+        dst_plot_source_dict[dir_path].lock()
+
+    for dir_path in src_plot_source_dict.keys():
+        src_plot_source_dict[dir_path].lock()
+
+def unlock_workqueues_and_sources():
+    for dir_path in src_plot_source_dict.keys():
+        src_plot_source_dict[dir_path].unlock()
+
+    for dir_path in dst_plot_source_dict.keys():
+        dst_plot_source_dict[dir_path].unlock()
+
+    for t in worker_thread_list:
+        t.wq.unlock();
+
+def file_in_source_dict(f, d):
+    for dir_path in d.keys():
+        source = d[dir_path]
+        if source.has_file(f):
+            return True
+
+        if source.has_copying_file(f):
+            return True
+
+    return False
+
+def process_pending_sources():
+    for dir_path in src_plot_source_dict.keys():
+        src = src_plot_source_dict[dir_path]
+
+        for file_name in list(src.file_dict.keys()):
+            f = src.file_dict[file_name]
+            if file_in_source_dict(f, dst_plot_source_dict):
+                log.info('Found the ' + f.full_path + ' in dst sources, skipped')
+                src.del_file(f)
+            else:
+                if not dispatch_file(f):
+                    return
+
+def process_work_item(wq, item):
+    log.debug('process work item')
+
+    if pw_test_dryrun:
+        log.info('[ TEST DRY RUN ] Moving ' + item.plot_file.full_path + ' to ' + wq.out_source.dir + '...')
+        item.complete = True;
+    elif pw_test_wq_stall:
+        log.info('[ TEST WQ_STALL ] Moving ' + item.plot_file.full_path + ' to ' + wq.out_source.dir + '...')
+        item.complete = False;
+    else:
+        log.info('Moving ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
+
+        try:
+            shutil.move(item.plot_file.full_path, wq.out_source.dir)
+
+        except:
+            log.info('Fail to move ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
+            shutil.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+            item.complete = False;
+
+        else:
+            item.complete = True;
+            log.info('Done ' + item.plot_file.full_path)
+
+def complete_work_item(wq, item):
+    log.debug('complete work item')
+
+    src = item.in_source;
+    dst = wq.out_source;
+
+    wq.lock();
+    dst.lock();
+    src.lock();
+
+    wq.complete(item)
+
+    src.del_copying_file(item.plot_file)
+    dst.del_copying_file(item.plot_file)
+
+    if not item.complete:
+        log.info('work: plot file: ' + item.plot_file.full_path + ' is not complete')
+        if not can_access_file(item.plot_file):
+            log.info('plot file ' + item.plot_file.full_path + ' can not be accessed, skip it')
+        else:
+            log.info('plot file can be accessed, but dst can not, keep it pending')
+            src.add_file(item.plot_file)
+    else:
+        dst.add_file(item.plot_file)
+
+    del item
+
+    src.dump('complete_work_item')
+    dst.dump('complete_work_item')
+
+    if pw_test_wq_stall:
+        dst.debug_set_full = True;
+    
+    dst.update_status();
+
+    if not dst.ready:
+        log.info('dst dir ' + dst.dir + ' is not ready, workqueue stall')
+        wq.stall()
+    elif dst.full():
+        log.info('dst dir ' + dst.dir + ' is full, workqueue stall')
+        wq.stall()
+
+    src.unlock();
+    dst.unlock();
+    wq.unlock();
+
+def dispatch_file(f):
+    log.debug('dispatch file ' + f.full_path)
+
+    src = src_plot_source_dict[f.path];
+
+    best = None
+
+    for t in worker_thread_list:
+        wq = t.wq;
+
+        wq.dump('dispatch_file')
+
+        if wq.stalled:
+            continue
+
+        if wq.out_source.full_after_copy():
+            continue;
+
+        if best is None:
+            best = t
+            continue
+
+        if wq.copying_size < best.wq.copying_size:
+            best = t
+
+    if best is None:
+        log.debug('fail to dispatch the work ' + f.name)
+        log.debug('no available workqueue')
+        return False
+
+    wq = best.wq
+    dst = wq.out_source;
+
+    log.debug('pick the idlest q: ' + dst.dir)
+
+    if not pw_test_prio:
+        if src.full():
+            log.debug('work - high priority')
+            prio = 1
+        else:
+            log.debug('work - normal priority')
+            prio = 3
+    else:
+        log.debug('[ TEST PRIO ] - ' + str(wq.debug_prio))
+        prio = wq.debug_prio
+
+        if prio == 3:
+            wq.debug_prio = 1
+        else:
+            wq.debug_prio = 3
+
+    src.del_file(f)
+    src.add_copying_file(f)
+
+    dst.add_copying_file(f)
+
+    src.dump('dispatch_file')
+    dst.dump('dispatch_file')
+
+    item = work_item(f, src, prio)
+    wq.enqueue(item);
+
+    return True;
+
+src_plot_source_dict = {}
+dst_plot_source_dict = {}
+
+worker_thread_list = []
+exit_flag = 0
+
+def _main():
+    populate_plot_source()
+    populate_workers()
+
+    lock_workqueues_and_sources()
+
+    process_pending_sources()
+
+    unlock_workqueues_and_sources()
+
+    i = inotify.adapters.Inotify()
+
+    for path in src_plots_dir.keys():
+        i.add_watch(path)
+
+    for event in i.event_gen():
+        if event is None:
+            continue
+
+        (header, type_names, watch_path, filename) = event
+
+        if not filename.endswith(".plot"):
+            continue
+
+        if not os.path.isfile(watch_path + '/' + filename):
+            continue
+
+        if "IN_CLOSE_WRITE" not in type_names and "IN_MOVED_TO" not in type_names:
+            continue
+
+        log.debug('inotify event: watch_path: ' + watch_path + ' file name ' + filename)
+
+        lock_workqueues_and_sources()
+
+        f = plot_file(watch_path, filename)
+
+        if file_in_source_dict(f, dst_plot_source_dict):
+            del f
+        else:
+            src = src_plot_source_dict[f.path];
+            src.add_file(f);
+        
+        process_pending_sources()
+
+        unlock_workqueues_and_sources()
+
+if __name__ == '__main__':
+    _main()
