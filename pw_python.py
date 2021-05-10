@@ -8,6 +8,7 @@ import os.path
 import threading
 import queue
 import shutil
+import psutil
 
 import inotify.adapters
 from pw_conf import *
@@ -263,20 +264,69 @@ def show_all_plot_sources():
         log.info('dst plot: ' + ' [dir] ' + plot.dir + ' [avail] ' + str(plot.avail) + 'G'
                 + ' [ready] ' + str(plot.ready) + ' [full] ' + str(plot.full()));
 
-def populate_plot_source():
-    for dir_path in src_plots_dir.keys():
-        mp = src_plots_dir[dir_path]
+def manually_populate_plot_sources(src, dst):
+    for dir_path in src.keys():
+        mp = src[dir_path]
         plot = plot_source(mp, dir_path, True)
-        plot.dump('populate_plot_source');
+        plot.dump('manually_populate_plot_source');
 
         src_plot_source_dict[dir_path] = plot
 
-    for dir_path in dst_plots_dir.keys():
-        mp = dst_plots_dir[dir_path]
+    for dir_path in dst.keys():
+        mp = dst[dir_path]
         plot = plot_source(mp, dir_path, False)
-        plot.dump('populate_plot_source');
+        plot.dump('manually_populate_plot_source');
 
         dst_plot_source_dict[dir_path] = plot
+
+def auto_populate_plot_sources(src, dst):
+    partitions = psutil.disk_partitions()
+
+    for p in partitions:
+        if not "/dev/sd" in p.device:
+            continue
+
+        if p.mountpoint == "/":
+            continue
+
+        if not p.fstype == "ext4" and not p.fstype == "xfs":
+            continue
+
+        dir_path = p.mountpoint + '/' + pw_autodetect_plot_dir
+
+        if not can_access_dir(dir_path):
+            log.info("Cannot access plot folder " + dir_path + " on " + p.mountpoint)
+            continue
+
+        s = psutil.disk_usage(p.mountpoint)
+        t = int(s.total / 1024 / 1024 / 1024 / 1024)
+
+        if t > 8:
+            log.info("detect DST source:" + p.mountpoint + " total: " + str(int(t)) + ' G')
+            plot = plot_source(p.mountpoint, dir_path, False)
+            plot.dump('auto_populate_plot_source');
+
+            dst_plot_source_dict[dir_path] = plot
+            dst[dir_path] = p.mountpoint
+        else:
+            log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' G')
+            plot = plot_source(p.mountpoint, dir_path, True)
+            plot.dump('auto_populate_plot_source');
+
+            src_plot_source_dict[dir_path] = plot
+            src[dir_path] = p.mountpoint
+
+def populate_plot_source():
+    if pw_autodetect_source:
+        src_plots_dir.clear()
+        dst_plots_dir.clear()
+        auto_populate_plot_sources(src_plots_dir, dst_plots_dir)
+        if not src_plots_dir:
+            raise RuntimeError("Cannot find any available SRC source")
+        if not dst_plots_dir:
+            raise RuntimeError("Cannot find any available DST source")
+    else:
+        manually_populate_plot_sources(src_plots_dir, dst_plots_dir)
 
     show_all_plot_sources()
 
@@ -371,12 +421,12 @@ def process_pending_sources():
 
     while len(src_plot_iter):
         for dir_path in list(src_plot_iter.keys()):
-            log.debug('DIR: ' + dir_path)
+            log.debug('process_pending_sources: dir: ' + dir_path)
             src = src_plot_source_dict[dir_path]
             it = src_plot_iter[dir_path]
             try:
                 file_name = next(it)
-                log.debug('File: ' + file_name)
+                log.debug('process_pending_sources: file: ' + file_name)
             except StopIteration:
                 del src_plot_iter[dir_path]
                 continue
@@ -545,6 +595,7 @@ def _main():
     i = inotify.adapters.Inotify()
 
     for path in src_plots_dir.keys():
+        log.debug("add watch: " + path)
         i.add_watch(path)
 
     for event in i.event_gen():
