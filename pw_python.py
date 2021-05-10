@@ -353,10 +353,24 @@ def file_in_source_dict(f, d):
     return False
 
 def process_pending_sources():
+    src_plot_iter = {}
+
     for dir_path in src_plot_source_dict.keys():
         src = src_plot_source_dict[dir_path]
+        src_plot_iter[dir_path] = iter(list(src.file_dict.keys()))
 
-        for file_name in list(src.file_dict.keys()):
+    while len(src_plot_iter):
+        for dir_path in list(src_plot_iter.keys()):
+            log.debug('DIR: ' + dir_path)
+            src = src_plot_source_dict[dir_path]
+            it = src_plot_iter[dir_path]
+            try:
+                file_name = next(it)
+                log.debug('File: ' + file_name)
+            except StopIteration:
+                del src_plot_iter[dir_path]
+                continue
+
             f = src.file_dict[file_name]
             if file_in_source_dict(f, dst_plot_source_dict):
                 log.info('Found the ' + f.full_path + ' in dst sources, skipped')
