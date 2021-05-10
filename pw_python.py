@@ -402,13 +402,16 @@ def process_work_item(wq, item):
         log.info('Moving ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
 
         try:
-            shutil.move(item.plot_file.full_path, wq.out_source.dir)
-
+            shutil.move(item.plot_file.full_path, os.path.join(wq.out_source.dir, item.plot_file.name))
         except:
             log.info('Fail to move ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
-            shutil.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
-            item.complete = False;
 
+            try:
+                os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+            except OSError:
+                    pass
+
+            item.complete = False;
         else:
             item.complete = True;
             log.info('Done ' + item.plot_file.full_path)
