@@ -2,6 +2,7 @@ log_server_ip = "192.168.0.132"
 
 pw_autodetect_source = True
 pw_autodetect_plot_dir = "plots" # plot folder on each mountpoints. E.g setting "plots" = /hdd1/plots /hdd2/plots /hdd3/plots etc...
+pw_autodetect_min_dst_source_size = 3 # in TB. Any mountpoint which is larger than 3TB will be taken as DST source, if not, then SRC source
 
 #path and mountpoint
 #pw_autodetect_source = False

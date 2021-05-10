@@ -301,15 +301,15 @@ def auto_populate_plot_sources(src, dst):
         s = psutil.disk_usage(p.mountpoint)
         t = int(s.total / 1024 / 1024 / 1024 / 1024)
 
-        if t > 8:
-            log.info("detect DST source:" + p.mountpoint + " total: " + str(int(t)) + ' G')
+        if t >= pw_autodetect_min_dst_source_size:
+            log.info("detect DST source:" + p.mountpoint + " total: " + str(int(t)) + ' TB')
             plot = plot_source(p.mountpoint, dir_path, False)
             plot.dump('auto_populate_plot_source');
 
             dst_plot_source_dict[dir_path] = plot
             dst[dir_path] = p.mountpoint
         else:
-            log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' G')
+            log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' TB')
             plot = plot_source(p.mountpoint, dir_path, True)
             plot.dump('auto_populate_plot_source');
 
