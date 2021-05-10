@@ -165,9 +165,6 @@ class work_item:
         self.complete = False
         self.prio = prio
 
-    def __lt__(self, other):
-        return self.prio < other.prio
-
     def dump(self, tag):
         log.debug('[ ' + tag + ' ] ' + '======= work item dump =======')
         log.debug('[ ' + tag + ' ] ' + 'work item: ' + self.plot_file.full_path + ' size: ' + str(self.plot_file.size) + 'G' + ' actual size: ' + str(self.plot_file.actual_size) + 'B' + ' complete ' + self.complete);
@@ -175,7 +172,8 @@ class work_item:
 class work_queue:
     def __init__(self, out_source):
         self.stalled = False
-        self.q = queue.PriorityQueue()
+        self.lo_q = queue.Queue()
+        self.hi_q = queue.Queue()
         self.mutex = threading.Lock()
         self.cond = threading.Condition(self.mutex)
         self.copying_size = 0
@@ -191,7 +189,11 @@ class work_queue:
         self.mutex.release()
 
     def enqueue(self, item):
-        self.q.put(item)
+        if not item.prio:
+            self.hi_q.put(item)
+        else:
+            self.lo_q.put(item)
+
         log.debug('enqueue work: ' + item.plot_file.full_path + ' into ' + self.out_source.dir)
         self.copying_size = self.copying_size + item.plot_file.actual_size
         self.file_copying_dict[item.plot_file.name] = item
@@ -199,7 +201,15 @@ class work_queue:
         self.cond.notify()
 
     def dequeue(self):
-        item = self.q.get()
+        try:
+            if not self.hi_q.empty():
+                item = self.hi_q.get()
+            else:
+                item = self.lo_q.get()
+        except queue.Full:
+            log.debug('dequeue: wq is empty? ' + self.out_source.dir)
+            return None
+
         log.debug('dequeue work: ' + item.plot_file.full_path + ' into ' + self.out_source.dir)
         self.dump('wq_dequeue')
         return item
@@ -281,7 +291,7 @@ class worker_thread(threading.Thread):
         while not exit_flag:
             self.wq.lock()
 
-            while self.wq.q.empty():
+            while self.wq.lo_q.empty() and self.wq.hi_q.empty():
                 all_full = True;
 
                 for dir_path in dst_plot_source_dict.keys():
@@ -487,7 +497,7 @@ def dispatch_file(f):
     if not pw_test_prio:
         if src.full():
             log.debug('work - high priority')
-            prio = 1
+            prio = 0
         else:
             log.debug('work - normal priority')
             prio = 3
@@ -496,7 +506,7 @@ def dispatch_file(f):
         prio = wq.debug_prio
 
         if prio == 3:
-            wq.debug_prio = 1
+            wq.debug_prio = 0
         else:
             wq.debug_prio = 3
 
