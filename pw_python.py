@@ -357,11 +357,13 @@ class worker_thread(threading.Thread):
                     log.info('[ ALL FULL ] All the dst sources are full')
                 elif self.wq.out_source.full_after_copy():
                     log.info('[ FULL ] ' + self.wq.out_source.dir + ' is full ')
+                else:
+                    kick_dispatcher()
 
                 for dir_path in dst_plot_source_dict.keys():
                     dst_plot_source_dict[dir_path].unlock()
 
-                log.debug('worker thread ' + self.wq.out_source.dir + ' is idle')
+                log.debug('worker thread ' + self.wq.out_source.dir + ' is going to sleep')
                 self.wq.cond.wait()
 
             log.debug('thread ' + self.wq.out_source.dir +' wake up')
@@ -380,6 +382,35 @@ def populate_workers():
         thread = worker_thread(wq)
         thread.start()
         worker_thread_list.append(thread)
+
+class dispatcher_thread(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.event = threading.Event()
+        self.event.clear()
+
+    def run(self):
+        log.debug('starting dispatch thread');
+
+        while not exit_flag:
+            self.event.wait()
+
+            log.debug('dispatch thread wake up')
+
+            self.event.clear()
+
+            lock_workqueues_and_sources()
+            process_pending_sources()
+            unlock_workqueues_and_sources()
+
+def populate_dispatcher():
+    thread = dispatcher_thread()
+    thread.start()
+    dispatcher_thread_list.append(thread)
+
+def kick_dispatcher():
+    for t in dispatcher_thread_list:
+        t.event.set()
 
 def lock_workqueues_and_sources():
     for t in worker_thread_list:
@@ -437,7 +468,8 @@ def process_pending_sources():
                 src.del_file(f)
             else:
                 if not dispatch_file(f):
-                    return
+                    return False
+    return True
 
 def process_work_item(wq, item):
     log.debug('process work item')
@@ -539,7 +571,7 @@ def dispatch_file(f):
 
     if best is None:
         log.debug('fail to dispatch the work ' + f.name)
-        log.debug('no available workqueue')
+        log.debug('no available workqueue, stop dispatch.')
         return False
 
     wq = best.wq
@@ -580,17 +612,15 @@ src_plot_source_dict = {}
 dst_plot_source_dict = {}
 
 worker_thread_list = []
+dispatcher_thread_list = []
 exit_flag = 0
 
 def _main():
     populate_plot_source()
     populate_workers()
+    populate_dispatcher()
 
-    lock_workqueues_and_sources()
-
-    process_pending_sources()
-
-    unlock_workqueues_and_sources()
+    kick_dispatcher()
 
     i = inotify.adapters.Inotify()
 
@@ -624,10 +654,11 @@ def _main():
         else:
             src = src_plot_source_dict[f.path];
             src.add_file(f);
-        
-        process_pending_sources()
 
         unlock_workqueues_and_sources()
+
+        kick_dispatcher()
+
 
 if __name__ == '__main__':
     _main()
