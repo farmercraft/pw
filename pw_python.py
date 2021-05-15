@@ -224,7 +224,8 @@ class work_queue:
     def stall(self):
         log.debug('workqueue: ' + self.out_source.dir + ' stall , retiring all work items')
         self.stalled = True;
-        self.q.queue.clear()
+        self.hi_q.queue.clear()
+        self.lo_q.queue.clear()
 
         for name in list(self.file_copying_dict.keys()):
             item = self.file_copying_dict[name]
