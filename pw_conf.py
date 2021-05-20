@@ -8,3 +8,5 @@ pw_autodetect_min_dst_source_size = 6 # in TB. Any mountpoint which is larger th
 #pw_autodetect_source = False
 src_plots_dir = { "/sdb/plots":"/sdb", "/sdc/plots":"/sdc", "/sdd/plots":"/sdd", "/sdf/plots":"/sdf", "/sde/plots":"/sde", "/sdh/plots":"/sdh", "/sdi/plots":"/sdi", "/sdj/plots":"/sdj", "/sdk/plots":"/sdk", "/home/f91/plots":"/"}
 dst_plots_dir = { "/sdg/plots":"/sdg"}
+
+pw_command_server_port = 5555

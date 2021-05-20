@@ -9,6 +9,7 @@ import threading
 import queue
 import shutil
 import psutil
+import socketserver
 
 import inotify.adapters
 from pw_conf import *
@@ -609,6 +610,102 @@ def dispatch_file(f):
 
     return True;
 
+class command_server_handler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.data = self.rfile.readline().strip()
+
+        log.debug("Client: {} wrote:".format(self.client_address[0]))
+
+        cmdline = [x.decode('utf-8') for x in self.data.split()]
+        log.debug(cmdline)
+
+        if cmdline[0] == "SEND":
+            self.cmd_send(cmdline)
+        elif cmdline[0] == "INFO":
+            self.cmd_info(cmdline)
+        elif cmdline[0] == "CHECK":
+            self.cmd_check(cmdline)
+        else:
+            log.debug("Invalid command.")
+            self.wfile.write("EINVAL".encode())
+
+    def cmd_send(self, cmdline):
+        if not len(cmdline) == 3:
+            log.debug("Not enough params.")
+            self.wfile.write("EINVAL".encode())
+            return
+
+        name = cmdline[1]
+
+        try:
+            length = int(cmdline[2])
+        except ValueError:
+            log.debug("Invalid length of file")
+            self.wfile.write("EINVAL".encode())
+            return
+
+        log.debug("Filename: " + name + " Length: " + str(length))
+
+        log.debug("Server: OK")
+        self.wfile.write("OK".encode())
+
+        log.debug("Server: Start receiving " + str(length) + " bytes ")
+        s = self.rfile.read(length)
+
+        log.debug("Server: OK")
+        self.wfile.write("OK".encode())
+
+    def cmd_check(self, cmdline):
+        if not len(cmdline) == 3:
+            log.debug("Not enough params.")
+            self.wfile.write("EINVAL".encode())
+            return
+
+        name = cmdline[1]
+
+        try:
+            length = int(cmdline[2])
+        except ValueError:
+            log.debug("Invalid length of file")
+            self.wfile.write("EINVAL".encode())
+            return
+
+        log.debug("Filename: " + name + " Length: " + str(length))
+
+        log.debug("Server: OK")
+        self.wfile.write("OK".encode())
+
+    def cmd_info(self, cmdline):
+        if not len(cmdline) == 1:
+            log.debug("Invalid params.")
+            self.wfile.write("EINVAL".encode())
+            return
+
+        log.debug("Server: OK")
+        self.wfile.write("OK".encode())
+
+class command_server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass):
+        socketserver.TCPServer.__init__(self, server_address, RequestHandlerClass)
+
+class command_server_thread(threading.Thread):
+    def __init__(self, port):
+        threading.Thread.__init__(self)
+        self.port = port
+
+    def run(self):
+        log.debug('starting command_server thread');
+
+        server = command_server(("0.0.0.0", self.port), command_server_handler)
+        server.serve_forever()
+
+def populate_command_server():
+    thread = command_server_thread(int(pw_command_server_port))
+    thread.start()
+
 src_plot_source_dict = {}
 dst_plot_source_dict = {}
 
@@ -620,8 +717,8 @@ def _main():
     populate_plot_source()
     populate_workers()
     populate_dispatcher()
-
     kick_dispatcher()
+    populate_command_server()
 
     i = inotify.adapters.Inotify()
 
