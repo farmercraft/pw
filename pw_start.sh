@@ -1,8 +1,6 @@
 #!/bin/sh
 
 echo `hostname` | sudo -S apt-get -y install python3-pip
-
-pip3 install inotify
-pip3 install psutil
+echo `hostname` | sudo -S pip3 install inotify psutil
 
 ./pw_python.py
