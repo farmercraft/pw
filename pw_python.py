@@ -321,6 +321,18 @@ def populate_plot_source():
     if pw_autodetect_source:
         src_plots_dir.clear()
         dst_plots_dir.clear()
+        if pw_autodetect_home_source:
+            home_path = os.environ['HOME']
+            dir_path = os.path.join(home_path, pw_autodetect_plot_dir)
+            log.info("Check home source: " + dir_path)
+            if can_access_dir(dir_path):
+                mp = "/"
+                plot = plot_source(mp, dir_path, True)
+                src_plot_source_dict[dir_path] = plot
+                src_plots_dir[dir_path] = mp
+                plot.dump('auto_populate_plot_source');
+            else:
+                log.info("cannot access " + dir_path)
         auto_populate_plot_sources(src_plots_dir, dst_plots_dir)
         if not src_plots_dir:
             raise RuntimeError("Cannot find any available SRC source")
