@@ -609,6 +609,32 @@ def dispatch_file(f):
 
     return True;
 
+def read_pid():
+    pid = None
+
+    if os.path.exists("/tmp/pw_pid.log"):
+        f = open('/tmp/pw_pid.log', 'r')
+        pid = int(f.read())
+        f.close()
+
+    return pid
+
+def write_pid():
+    f = open('/tmp/pw_pid.log', 'w')
+    f.write(str(os.getpid()))
+    f.close()
+
+def check_running():
+    pid = read_pid()
+    if pid:
+        running = psutil.pids()
+        if pid in running:
+            raise RuntimeError("pw_python is already running")
+        else:
+            write_pid()
+    else:
+        write_pid()
+
 src_plot_source_dict = {}
 dst_plot_source_dict = {}
 
@@ -617,6 +643,7 @@ dispatcher_thread_list = []
 exit_flag = 0
 
 def _main():
+    check_running()
     populate_plot_source()
     populate_workers()
     populate_dispatcher()
