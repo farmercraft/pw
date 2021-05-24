@@ -362,12 +362,13 @@ class worker_thread(threading.Thread):
 
                 for dir_path in dst_plot_source_dict.keys():
                     dst = dst_plot_source_dict[dir_path]
-                    if not dst.full_after_copy():
+                    if not dst.full() or dst.file_copying_dict:
                         all_full = False
                         break;
 
                 if all_full:
-                    log.info('[ ALL FULL ] All the dst sources are full')
+                    log.info('[ ALL FULL ] All the dst sources are full, exit!')
+                    os._exit(1)
                 elif self.wq.out_source.full_after_copy():
                     log.info('[ FULL ] ' + self.wq.out_source.dir + ' is full ')
                 else:
