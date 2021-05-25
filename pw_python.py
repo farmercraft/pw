@@ -310,6 +310,7 @@ def auto_populate_plot_sources(src, dst):
             dst_plot_source_dict[dir_path] = plot
             dst[dir_path] = p.mountpoint
         else:
+            os.system("sudo blockdev -v --setra 16384 " + p.device)
             log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' TB')
             plot = plot_source(p.mountpoint, dir_path, True)
             plot.dump('auto_populate_plot_source');
