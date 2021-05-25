@@ -468,6 +468,10 @@ def process_pending_sources():
         for dir_path in list(src_plot_iter.keys()):
             log.debug('process_pending_sources: dir: ' + dir_path)
             src = src_plot_source_dict[dir_path]
+            if src.file_copying_dict:
+                del src_plot_iter[dir_path]
+                continue;
+
             it = src_plot_iter[dir_path]
             try:
                 file_name = next(it)
