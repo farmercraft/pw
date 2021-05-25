@@ -30,14 +30,14 @@ def create_logger(log_level=logging.DEBUG):
     logger = logging.getLogger("plot watcher")
     logger.setLevel(log_level)
 
-    sh_formatter = logging.Formatter('%(name)s: %(message)s\n')
+    sh_formatter = logging.Formatter(socket.gethostname() + ': %(name)s: %(message)s\n')
     sh = logging.handlers.SysLogHandler(address=(log_server_ip, 514),
             facility=syslog.LOG_INFO, socktype=socket.SOCK_STREAM)
     sh.setLevel(log_level)
     sh.setFormatter(sh_formatter)
     sh.append_nul = False
 
-    ch_formatter = logging.Formatter('%(name)s: %(message)s')
+    ch_formatter = logging.Formatter(socket.gethostname() + ': %(name)s: %(message)s')
     ch = logging.StreamHandler()
     ch.setLevel(log_level)
     ch.setFormatter(ch_formatter)
