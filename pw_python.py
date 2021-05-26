@@ -372,6 +372,7 @@ class worker_thread(threading.Thread):
                     os._exit(1)
                 elif self.wq.out_source.full_after_copy():
                     log.info('[ FULL ] ' + self.wq.out_source.dir + ' is full ')
+                    kick_dispatcher()
                 else:
                     kick_dispatcher()
 
