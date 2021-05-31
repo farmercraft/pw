@@ -509,7 +509,10 @@ def process_work_item(wq, item):
             log.info('Fail to move ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
 
             try:
-                os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+                if can_access_file(item.plot_file):
+                    os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+                else:
+                    log.info('SRC file ' + item.plot_file.full_path + ' is removed when moving failed! Skip deleting incomplete DST file.')
             except OSError:
                     pass
 
