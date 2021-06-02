@@ -290,7 +290,7 @@ def auto_populate_plot_sources(src, dst):
         if p.mountpoint == "/":
             continue
 
-        if not p.fstype == "ext4" and not p.fstype == "xfs":
+        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "f2fs":
             continue
 
         dir_path = p.mountpoint + '/' + pw_autodetect_plot_dir
