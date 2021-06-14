@@ -9,7 +9,9 @@ import threading
 import queue
 import shutil
 import psutil
+import time
 
+from ftplib import FTP
 import inotify.adapters
 from pw_conf import *
 
@@ -53,22 +55,149 @@ else:
     log = create_logger(logging.INFO)
 
 class plot_file:
-    def __init__(self, path, name):
+    def __init__(self, path, name, actual_size=0, remote=False):
         self.path = path
         self.name = name
-        self.full_path = os.path.join(path, name)
-        self.actual_size = int(os.path.getsize(self.full_path))
+        self.remote = remote
+
+        if not remote:
+            self.full_path = os.path.join(path, name)
+            self.actual_size = int(os.path.getsize(self.full_path))
+        else:
+            self.full_path = "ftp://" + path + "/" + name
+            self.actual_size = actual_size
+
         self.size = int(self.actual_size / 1024 / 1024 / 1024)
+
+def get_ftp_file_list(ftp, dict):
+    dict.clear()
+
+    for name,facts in ftp.mlsd():
+        if facts['type'] != "file":
+            continue
+
+        if not name.endswith(".plot"):
+            continue
+
+        dict[name] = facts['size']
+
+def drop_work_item_from_path(wq, path):
+    new_hi_q = queue.Queue()
+    new_lo_q = queue.Queue()
+
+    while not wq.hi_q.empty():
+        item = wq.hi_q.get()
+        if item.plot_file.path != path:
+            new_hi_q.put(item)
+
+    while not wq.lo_q.empty():
+        item = wq.lo_q.get()
+        if item.plot_file.path != path:
+            new_lo_q.put(item)
+
+    wq.hi_q = new_hi_q
+    wq.lo_q = new_lo_q
+
+def remote_source_is_lost(src):
+    lock_workqueues_and_sources()
+
+    src.file_dict.clear()
+    src.file_copying_dict.clear()
+
+    for t in worker_thread_list:
+        wq = t.wq;
+
+        if wq.stalled:
+            continue
+
+        drop_work_item_from_path(wq, src.ip_path)
+
+    unlock_workqueues_and_sources()
+
+class ftp_thread(threading.Thread):
+    def __init__(self, src):
+        threading.Thread.__init__(self)
+        self.src = src
+
+    def run(self):
+        log.debug('starting remote thread for ' + self.src.ip_path);
+
+        while not exit_flag:
+            prev_file_dict = {};
+            cur_file_dict = {};
+            new_file_dict = {};
+            ftp = FTP()
+
+            try:
+                ftp.connect(self.src.ip, 2121)
+                ftp.login("pw_ftp", "pw_ftp")
+                ftp.cwd(self.src.dir)
+            except:
+                try:
+                    ftp.quit()
+                    ftp.close()
+                except:
+                    pass
+
+                log.info("Fail to connect " + self.src.ip_path + " retry after 30 seconds")
+                time.sleep(30)
+                continue
+
+            connected = True
+            log.debug('connected to ' + self.src.ip_path)
+
+            while connected:
+                try:
+                    new_file = False
+                    ftp.voidcmd("NOOP")
+
+                    get_ftp_file_list(ftp, cur_file_dict)
+
+                    for name in cur_file_dict.keys():
+                        if name in prev_file_dict:
+                            continue
+                        new_file_dict[name] = cur_file_dict[name]
+
+                    for name in new_file_dict.keys():
+                        f = plot_file(self.src.ip_path, name, int(new_file_dict[name]), True)
+
+                        lock_workqueues_and_sources()
+                        if file_in_source_dict(f, dst_plot_source_dict) or file_in_source_dict(f, src_plot_source_dict):
+                            del f
+                        else:
+                            src = src_plot_source_dict[f.path]
+                            print(src.ip_path)
+                            src.add_file(f)
+                            new_file = True
+                        unlock_workqueues_and_sources()
+
+                    if new_file:
+                        lock_workqueues_and_sources()
+                        self.src.dump("ftp thread")
+                        unlock_workqueues_and_sources()
+                        kick_dispatcher()
+
+                    prev_file_dict = cur_file_dict.copy()
+
+                    ftp.voidcmd("NOOP")
+                    time.sleep(5)
+                except:
+                    log.debug('remote disconnected ' + self.src.ip_path)
+                    remote_source_is_lost(self.src)
+                    connected = False
 
 class plot_source:
     def get_plot_file_list(self, dir_path, file_dict):
+        if self.remote:
+            return
+
         list = os.listdir(dir_path)
         for name in list:
             full_path = os.path.join(dir_path, name)
             if os.path.isfile(full_path) and name.endswith(".plot"):
                 file_dict[name] = plot_file(dir_path, name)
 
-    def __init__(self, mountpoint, dir, src):
+    def __init__(self, mountpoint, dir, src, remote=False, ip=None, ip_path=None):
         self.mountpoint = mountpoint
         self.dir = dir
         self.ready = False
@@ -79,8 +208,18 @@ class plot_source:
         self.file_copying_dict = {}
         self.src = src
         self.mutex = threading.Lock()
-        self.get_plot_file_list(dir, self.file_dict)
-        self.update_status()
+        self.remote = remote
+
+        if self.remote:
+            if not src:
+                raise RuntimeError("Remote source cannot be set as DST source")
+            self.ip = ip
+            self.ip_path = ip_path
+            self.ftp_thread = ftp_thread(self)
+        else:
+            self.update_status()
+            self.get_plot_file_list(dir, self.file_dict)
+
         self.debug_set_full = False; #Debug
 
     def lock(self):
@@ -90,14 +229,20 @@ class plot_source:
         self.mutex.release();
 
     def full(self):
+        if self.remote:
+            return False
+
         if self.debug_set_full:
-            return True;
+            return True
         else:
             return self.avail < 200
 
     def full_after_copy(self):
+        if self.remote:
+            return False
+
         if self.debug_set_full:
-            return True;
+            return True
         else:
             return self.avail_after_copy < 200
 
@@ -132,6 +277,9 @@ class plot_source:
         return r;
 
     def update_status(self):
+        if self.remote:
+            return;
+
         self.ready = os.path.ismount(self.mountpoint) and can_access_dir(self.dir)
         if not self.ready:
             return;
@@ -145,13 +293,22 @@ class plot_source:
             self.avail_after_copy = self.avail - self.copying_size
 
     def dump(self, tag):
-        if self.src:
-            log.debug('[ ' + tag + ' ] ' + '======= SRC plot source dump =======')
+        if self.remote:
+            if self.src:
+                log.debug('[ ' + tag + ' ] ' + '======= REMOTE SRC plot source dump =======')
         else:
-            log.debug('[ ' + tag + ' ] ' + '======= DST plot source dump =======')
-        log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' mountpoint: ' + self.mountpoint + ' [avail] ' + str(self.avail) + 'G'
-                + ' [ready] ' + str(self.ready) + ' [copying] ' +
-                str(self.copying_size) + 'G [full] ' + str(self.full()) + ' [ full after copy ]' + str(self.full_after_copy()));
+            if self.src:
+                log.debug('[ ' + tag + ' ] ' + '======= LOCAL SRC plot source dump =======')
+            else:
+                log.debug('[ ' + tag + ' ] ' + '======= LOCAL DST plot source dump =======')
+
+        if self.remote:
+            log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + str(self.dir) + ' ip: ' + str(self.ip)
+                    + ' ip_path: ' + str(self.ip_path) + ' [ready] ' + str(self.ready) + ' [copying] ' + str(self.copying_size) + 'G')
+        else:
+            log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' mountpoint: ' + self.mountpoint + ' [avail] ' + str(self.avail) + 'G' +
+                    ' [ready] ' + str(self.ready) + ' [copying] ' + str(self.copying_size) + 'G [full] ' + str(self.full()) + ' [ full after copy ]'
+                    + str(self.full_after_copy()));
         log.debug('[ ' + tag + ' ] ' + 'plot dir: ' + self.dir + ' file dict:')
         if pw_debug_dump_file_list:
             log.debug(self.file_dict)
@@ -318,6 +475,21 @@ def auto_populate_plot_sources(src, dst):
             src_plot_source_dict[dir_path] = plot
             src[dir_path] = p.mountpoint
 
+def populate_remote_source(src):
+    for ip in src.keys():
+        dir_path = src[ip]
+        ip_path = ip + ":2121/" + dir_path
+        plot = plot_source("", dir_path, True, True, ip, ip_path)
+        plot.dump('populate_remote_source')
+
+        src_plot_source_dict[ip_path] = plot
+
+def start_remote_source():
+    for path in src_plot_source_dict.keys():
+        src = src_plot_source_dict[path]
+        if src.remote:
+            src.ftp_thread.start()
+
 def populate_plot_source():
     if pw_autodetect_source:
         src_plots_dir.clear()
@@ -341,6 +513,9 @@ def populate_plot_source():
             raise RuntimeError("Cannot find any available DST source")
     else:
         manually_populate_plot_sources(src_plots_dir, dst_plots_dir)
+
+    if pw_remote_source:
+        populate_remote_source(remote_source_dir)
 
     show_all_plot_sources()
 
@@ -503,23 +678,45 @@ def process_work_item(wq, item):
     else:
         log.info('Moving ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
 
-        try:
-            shutil.move(item.plot_file.full_path, os.path.join(wq.out_source.dir, item.plot_file.name))
-        except:
-            log.info('Fail to move ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
-
+        if not item.plot_file.remote:
             try:
-                if can_access_file(item.plot_file):
-                    os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
-                else:
-                    log.info('SRC file ' + item.plot_file.full_path + ' is removed when moving failed! Skip deleting incomplete DST file.')
-            except OSError:
+                shutil.move(item.plot_file.full_path, os.path.join(wq.out_source.dir, item.plot_file.name))
+            except:
+                log.info('Fail to move ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
+
+                try:
+                    if can_access_file(item.plot_file):
+                        os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+                    else:
+                        log.info('SRC file ' + item.plot_file.full_path + ' is removed when moving failed! Skip deleting incomplete DST file.')
+                except OSError:
                     pass
 
-            item.complete = False;
+                item.complete = False;
+            else:
+                item.complete = True;
+                log.info('Done ' + item.plot_file.full_path)
         else:
-            item.complete = True;
-            log.info('Done ' + item.plot_file.full_path)
+            cmdline = "cd " + wq.out_source.dir + " && wget --user pw_ftp --password pw_ftp " + item.plot_file.full_path
+
+            r = os.system(cmdline)
+            r = (r >> 8) & 0xff
+            if r == 0:
+                item.complete = True;
+                src = src_plot_source_dict[item.plot_file.path]
+                log.info('Done ' + item.plot_file.full_path)
+                cmdline = "lftp -u pw_ftp,pw_ftp " + src.ip_path + "  -e \"rm " + item.plot_file.name + "; exit\""
+                print(cmdline)
+                os.system(cmdline)
+            else:
+                log.info('Fail to download ' + item.plot_file.full_path + ' to ' + wq.out_source.dir)
+
+                try:
+                    os.remove(os.path.join(wq.out_source.dir, item.plot_file.name))
+                except OSError:
+                    pass
+
+                item.complete = False;
 
 def complete_work_item(wq, item):
     log.debug('complete work item')
@@ -669,7 +866,7 @@ def _main():
     populate_plot_source()
     populate_workers()
     populate_dispatcher()
-
+    start_remote_source()
     kick_dispatcher()
 
     i = inotify.adapters.Inotify()
