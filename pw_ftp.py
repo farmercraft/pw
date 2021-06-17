@@ -53,7 +53,7 @@ def auto_populate_root():
     partitions = psutil.disk_partitions()
 
     for p in partitions:
-        if not "/dev/sd" in p.device:
+        if not "/dev/sd" and not "/dev/nvme" in p.device:
             continue
 
         if p.mountpoint == "/":
@@ -73,7 +73,7 @@ def auto_populate_root():
 
         if t < pw_autodetect_min_dst_source_size:
             log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' TB')
-            path = ftp_root + "/" + os.path.basename(dir_path)
+            path = ftp_root + "/" + dir_path.replace("/", "-")
             log.info("Creating " + dir_path + " -> " + path)
             os.symlink(dir_path, path)
 
