@@ -73,7 +73,7 @@ def auto_populate_root():
 
         if t < pw_autodetect_min_dst_source_size:
             log.info("detect SRC source:" + p.mountpoint + " total: " + str(int(t)) + ' TB')
-            path = ftp_root + "/" + dir_path.replace("/", "-")
+            path = ftp_root + "/" + dir_path.replace("/", "")
             log.info("Creating " + dir_path + " -> " + path)
             os.symlink(dir_path, path)
 
