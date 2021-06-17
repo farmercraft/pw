@@ -18,7 +18,7 @@ from pw_conf import *
 pw_test_prio = False
 
 #dryrun, won't touch the actual file
-pw_test_dryrun = False
+pw_test_dryrun = True
 
 #trigger the wq stall
 pw_test_wq_stall = False
@@ -293,7 +293,7 @@ def auto_populate_plot_sources(src, dst):
     partitions = psutil.disk_partitions()
 
     for p in partitions:
-        if not "/dev/sd" in p.device:
+        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device:
             continue
 
         if p.mountpoint == "/":
