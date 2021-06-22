@@ -18,7 +18,7 @@ from pw_conf import *
 pw_test_prio = False
 
 #dryrun, won't touch the actual file
-pw_test_dryrun = True
+pw_test_dryrun = False
 
 #trigger the wq stall
 pw_test_wq_stall = False
