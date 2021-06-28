@@ -69,6 +69,11 @@ class plot_source:
             if os.path.isfile(full_path) and name.endswith(".plot"):
                 if pw_autodetect_date:
                     t1 = os.path.getctime(full_path)
+                    t = os.path.getmtime(full_path)
+
+                    if int(t1) > int(t):
+                        t1 = t
+
                     t2 = time.mktime(time.strptime(pw_autodetect_date_start, '%Y-%m-%d %H:%M:%S'))
                     if int(t1) > int(t2):
                         file_dict[name] = plot_file(dir_path, name)
