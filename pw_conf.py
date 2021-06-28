@@ -1,4 +1,4 @@
-log_server_ip = "localhost"
+log_server_ip = None # or "ip"
 
 pw_autodetect_source = True
 pw_autodetect_home_source = False
