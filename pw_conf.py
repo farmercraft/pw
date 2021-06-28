@@ -6,6 +6,7 @@ pw_autodetect_plot_dir = "plots" # plot folder on each mountpoints. E.g setting 
 pw_autodetect_min_dst_source_size = 6 # in TB. Any mountpoint which is larger than 6TB will be taken as DST source, if not, then SRC source
 
 pw_autodetect_date = False
+pw_autodetect_date_start = "2021-07-01 00:00:00"
 
 #path and mountpoint
 #pw_autodetect_source = False
