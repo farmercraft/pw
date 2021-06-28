@@ -550,8 +550,9 @@ def complete_work_item(wq, item):
         if not can_access_file(item.plot_file):
             log.info('plot file ' + item.plot_file.full_path + ' can not be accessed, skip it')
         else:
-            log.info('plot file can be accessed, but dst can not, keep it pending')
+            log.info('plot file can be accessed, but dst can not, workqueue stall')
             src.add_file(item.plot_file)
+            wq.stall()
     else:
         dst.add_file(item.plot_file)
 
