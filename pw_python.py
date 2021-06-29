@@ -335,6 +335,111 @@ def auto_populate_plot_sources(src, dst):
             src_plot_source_dict[dir_path] = plot
             src[dir_path] = p.mountpoint
 
+def cmp_free_from_part_info(info):
+    return info.free
+
+def add_dst_source(mp, dir_path, t):
+    log.info("Add DST source:" + mp + " total: " + str(int(t)) + ' TB')
+    plot = plot_source(mp, dir_path, False)
+    plot.dump('add_dst_plot_source');
+
+    dst_plot_source_dict[dir_path] = plot
+    dst_plots_dir[dir_path] = mp
+
+def add_src_source(mp, dir_path, t):
+    log.info("Add SRC source:" + mp + " total: " + str(int(t)) + ' TB')
+    plot = plot_source(mp, dir_path, True)
+    plot.dump('add_src_plot_source');
+
+    src_plot_source_dict[dir_path] = plot
+    src_plots_dir[dir_path] = mp
+
+class part_info:
+    def __init__(self, free, used, total, dir_path, mp):
+        self.free = free
+        self.used = used
+        self.total = total
+        self.dir_path = dir_path
+        self.mp = mp
+
+def auto_populate_plot_sources_merge_mode(src, dst):
+    partitions = psutil.disk_partitions()
+    source = []
+    plot_file_size = 103
+
+    for p in partitions:
+        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device:
+            continue
+
+        if p.mountpoint == "/":
+            continue
+
+        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "f2fs":
+            continue
+
+        dir_path = p.mountpoint + '/' + pw_autodetect_plot_dir
+
+        if not can_access_dir(dir_path):
+            log.info("Cannot access plot folder " + dir_path + " on " + p.mountpoint)
+            continue
+
+        s = psutil.disk_usage(p.mountpoint)
+        t = int(s.total / 1024 / 1024 / 1024 / 1024)
+
+        if t < pw_autodetect_merge_disk_min_size:
+            continue
+
+        f = int(s.free / 1024 / 1024 / 1024)
+        if f < plot_file_size:
+            continue
+
+        u = int(s.used / 1024 / 1024 / 1024)
+        source.append(part_info(f, u, t, dir_path, p.mountpoint))
+
+    if not source:
+        raise RuntimeError("Cannot find any available disks for merging")
+
+    source.sort(key=cmp_free_from_part_info)
+    log.debug(source)
+
+    while True:
+        l = len(source)
+
+        if l == 1:
+            break
+
+        dst = source[0]
+        src = source[l-1]
+
+        log.debug("src" + " free " + str(src.free) + " used " + str(src.used) + " dir_path " + src.dir_path + " mp " + src.mp)
+        log.debug("dst" + " free " + str(dst.free) + " used " + str(dst.used) + " dir_path " + dst.dir_path + " mp " + dst.mp)
+
+        if dst.free >= src.used:
+            dst.free = dst.free - src.used
+            source.remove(src)
+            log.debug("add src " + src.dir_path)
+            add_src_source(src.mp, src.dir_path, src.total)
+            src = None
+            continue
+        else:
+            source.remove(dst)
+
+            if dst.free > plot_file_size:
+                src.used = src.used - dst.free
+
+            log.debug("add dst" + dst.dir_path)
+            add_dst_source(src.mp, dst.dir_path, dst.total)
+            dst = None
+            continue;
+
+    if src:
+        log.debug("add src " + src.dir_path)
+        add_src_source(src.mp, src.dir_path, src.total)
+
+    if dst:
+        log.debug("add dst" + dst.dir_path)
+        add_dst_source(src.mp, dst.dir_path, dst.total)
+
 def populate_plot_source():
     if pw_autodetect_source:
         src_plots_dir.clear()
@@ -351,7 +456,10 @@ def populate_plot_source():
                 plot.dump('auto_populate_plot_source');
             else:
                 log.info("cannot access " + dir_path)
-        auto_populate_plot_sources(src_plots_dir, dst_plots_dir)
+        if pw_autodetect_merge_mode:
+            auto_populate_plot_sources_merge_mode(src_plots_dir, dst_plots_dir)
+        else:
+            auto_populate_plot_sources(src_plots_dir, dst_plots_dir)
         if not src_plots_dir:
             raise RuntimeError("Cannot find any available SRC source")
         if not dst_plots_dir:
