@@ -428,7 +428,7 @@ def auto_populate_plot_sources_merge_mode(src, dst):
                 src.used = src.used - dst.free
 
             log.debug("add dst" + dst.dir_path)
-            add_dst_source(src.mp, dst.dir_path, dst.total)
+            add_dst_source(dst.mp, dst.dir_path, dst.total)
             dst = None
             continue;
 
@@ -438,7 +438,7 @@ def auto_populate_plot_sources_merge_mode(src, dst):
 
     if dst:
         log.debug("add dst" + dst.dir_path)
-        add_dst_source(src.mp, dst.dir_path, dst.total)
+        add_dst_source(dst.mp, dst.dir_path, dst.total)
 
 def populate_plot_source():
     if pw_autodetect_source:
