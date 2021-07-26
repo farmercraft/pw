@@ -12,8 +12,8 @@ pw_autodetect_date_start = "2021-07-01 00:00:00"
 #Dep: pw_autodetect_source = True
 #Take: pw_autodetect_plot_dir = "xxx", pw_autodetect_date*
 #Not take: pw_autodetect_min_dst_source_size
-pw_autodetect_merge_mode = False
-pw_autodetect_merge_disk_min_size = 10 # in TB. Disks of min size invovled in merge process
+pw_autodetect_merge_mode = True
+pw_autodetect_merge_disk_min_size = 1 # in TB. Disks of min size invovled in merge process
 
 #path and mountpoint
 #pw_autodetect_source = False
