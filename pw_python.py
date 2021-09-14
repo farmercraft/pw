@@ -307,7 +307,7 @@ def auto_populate_plot_sources(src, dst):
         if p.mountpoint == "/":
             continue
 
-        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "f2fs":
+        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "fuseblk":
             continue
 
         dir_path = p.mountpoint + '/' + pw_autodetect_plot_dir
@@ -374,7 +374,7 @@ def auto_populate_plot_sources_merge_mode(src, dst):
         if p.mountpoint == "/":
             continue
 
-        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "f2fs":
+        if not p.fstype == "ext4" and not p.fstype == "xfs" and not p.fstype == "fuseblk":
             continue
 
         dir_path = p.mountpoint + '/' + pw_autodetect_plot_dir
