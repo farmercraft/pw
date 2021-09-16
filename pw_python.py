@@ -70,18 +70,18 @@ class plot_source:
         for name in list:
             full_path = os.path.join(dir_path, name)
             if os.path.isfile(full_path) and name.endswith(".plot"):
-                if pw_autodetect_date:
+                if pw_autodetect_mv_mode:
                     t1 = os.path.getctime(full_path)
                     t = os.path.getmtime(full_path)
 
                     if int(t1) > int(t):
                         t1 = t
 
-                    t2 = time.mktime(time.strptime(pw_autodetect_date_start, '%Y-%m-%d %H:%M:%S'))
+                    t2 = time.mktime(time.strptime(pw_autodetect_mv_start, '%Y-%m-%d %H:%M:%S'))
                     if int(t1) > int(t2):
                         file_dict[name] = plot_file(dir_path, name)
                     else:
-                        log.debug("pw_autodetect_date: skip file: " + full_path)
+                        log.debug("pw_autodetect_mv_mode: skip file: " + full_path)
                 else:
                     file_dict[name] = plot_file(dir_path, name)
 
