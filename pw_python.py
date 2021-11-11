@@ -301,7 +301,7 @@ def auto_populate_plot_sources(src, dst):
     partitions = psutil.disk_partitions()
 
     for p in partitions:
-        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device:
+        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device and not "/dev/md" in p.device:
             continue
 
         if p.mountpoint == "/":
@@ -368,7 +368,7 @@ def auto_populate_plot_sources_merge_mode(src, dst):
     plot_file_size = 103
 
     for p in partitions:
-        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device:
+        if not "/dev/sd" in p.device and not "/dev/nvme" in p.device and not "/dev/md" in p.device:
             continue
 
         if p.mountpoint == "/":
