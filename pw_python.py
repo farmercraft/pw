@@ -69,7 +69,7 @@ class plot_source:
         list = os.listdir(dir_path)
         for name in list:
             full_path = os.path.join(dir_path, name)
-            if os.path.isfile(full_path) and name.endswith(".plot"):
+            if os.path.isfile(full_path) and name.endswith(pw_autodetect_plot_suffix):
                 if pw_autodetect_mv_mode:
                     t1 = os.path.getctime(full_path)
                     t = os.path.getmtime(full_path)
@@ -810,7 +810,7 @@ def _main():
 
         (header, type_names, watch_path, filename) = event
 
-        if not filename.endswith(".plot"):
+        if not filename.endswith(pw_autodetect_plot_suffix):
             continue
 
         if not os.path.isfile(watch_path + '/' + filename):
