@@ -110,13 +110,13 @@ class plot_source:
         if self.debug_set_full:
             return True;
         else:
-            return self.avail < 105
+            return self.avail < pw_autodetect_plot_disk_check_avail
 
     def full_after_copy(self):
         if self.debug_set_full:
             return True;
         else:
-            return self.avail_after_copy < 105
+            return self.avail_after_copy < pw_autodetect_plot_disk_check_avail
 
     def add_copying_file(self, f):
         self.file_copying_dict[f.name] = f
