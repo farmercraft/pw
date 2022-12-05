@@ -365,7 +365,7 @@ class part_info:
 def auto_populate_plot_sources_merge_mode(src, dst):
     partitions = psutil.disk_partitions()
     source = []
-    plot_file_size = 103
+    plot_file_size = pw_autodetect_plot_disk_check_avail;
 
     for p in partitions:
         if not "/dev/sd" in p.device and not "/dev/nvme" in p.device and not "/dev/md" in p.device:
