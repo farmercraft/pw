@@ -1,8 +1,9 @@
 # pw
 
-## install
+## require
+```
 sudo apt install rakudo -y
-
+```
 ## start 
 ```
 ./pw mv   
