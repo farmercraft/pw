@@ -1,6 +1,6 @@
 # pw
 
-## require
+requirements
 ```
 sudo apt install rakudo -y
 ```
