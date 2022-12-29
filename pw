@@ -2,5 +2,5 @@
 
 sub MAIN($name)
 {
-   qqx/tmux new -s $name \.\/pw_start.sh/;
+   qqx/tmux new -s $name -d \.\/pw_start.sh/;
 }
